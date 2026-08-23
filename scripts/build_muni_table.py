@@ -1,7 +1,8 @@
 """Build a simple Nagano municipality-level table.
 
 No aggregation, no geo_coefficient — just the raw join requested:
-    prefecture, municipality, total_area_km2, habitable_area_km2, medical_zone_name
+    prefecture, pref_code, municipality, muni_code, total_area_km2,
+    habitable_area_km2, medical_zone_name, medical_zone_code
 
 Usage:
     python scripts/build_muni_table.py
@@ -95,7 +96,9 @@ def load_habitable_area() -> pd.DataFrame:
     out["habitable_area_km2"] = pd.to_numeric(out["habitable_area_km2"], errors="coerce")
     out = out.dropna(subset=["jis_code", "habitable_area_km2"])
     out = out[out["jis_code"].str.startswith(NAGANO_PREF_CODE)]
-    return out[["municipality", "total_area_km2", "habitable_area_km2"]]
+    out["muni_code"] = out["jis_code"]
+    out["pref_code"] = out["jis_code"].str[:2]
+    return out[["municipality", "pref_code", "muni_code", "total_area_km2", "habitable_area_km2"]]
 
 
 def load_medical_zone_mapping() -> pd.DataFrame:
@@ -115,6 +118,7 @@ def load_medical_zone_mapping() -> pd.DataFrame:
         raise LookupError(f"Could not find a prefecture block for {PREFECTURE_NAME!r}.")
 
     records: list[dict] = []
+    current_zone_code: str | None = None
     current_zone_name: str | None = None
     i = pref_row_idx + 1
     while i < len(raw):
@@ -132,13 +136,20 @@ def load_medical_zone_mapping() -> pd.DataFrame:
             continue
 
         if col0.isdigit() and len(col0) == 4:
+            current_zone_code = col0
             current_zone_name = col1
 
         if current_zone_name is not None:
             for value in row.iloc[2:]:
                 muni_name = normalize_text(value)
                 if muni_name:
-                    records.append({"medical_zone_name": current_zone_name, "municipality": muni_name})
+                    records.append(
+                        {
+                            "medical_zone_code": current_zone_code,
+                            "medical_zone_name": current_zone_name,
+                            "municipality": muni_name,
+                        }
+                    )
         i += 1
 
     out = pd.DataFrame.from_records(records)
@@ -166,7 +177,16 @@ def build() -> pd.DataFrame:
 
     merged["prefecture"] = PREFECTURE_NAME
     return merged[
-        ["prefecture", "municipality", "total_area_km2", "habitable_area_km2", "medical_zone_name"]
+        [
+            "prefecture",
+            "pref_code",
+            "municipality",
+            "muni_code",
+            "total_area_km2",
+            "habitable_area_km2",
+            "medical_zone_name",
+            "medical_zone_code",
+        ]
     ].sort_values(["medical_zone_name", "municipality"])
 
 
