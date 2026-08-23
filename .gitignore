@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+
+# Raw government source files are large binary downloads; do not commit them.
+data/raw/*
+!data/raw/.gitkeep
