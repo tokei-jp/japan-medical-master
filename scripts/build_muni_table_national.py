@@ -247,6 +247,87 @@ def resolve_ward_candidates(zone_df: pd.DataFrame, area_df: pd.DataFrame) -> pd.
     return zone_df
 
 
+def collapse_stale_ward_boundaries(
+    matched: pd.DataFrame, unmatched: pd.DataFrame, area_df: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Recover cases where a designated city's wards in the mapping file are
+    partly stale (renamed/merged since the mapping file's reference date,
+    e.g. Hamamatsu's 2024 reorg from 7 wards to 3 -- the medical-zone file
+    is dated 令和5年12月31日, just before that took effect, so some of its
+    old ward names, like 天竜区, are unchanged and match fine while others,
+    like 中区/東区/西区/南区/北区/浜北区, don't exist anymore).
+
+    Fires only when a zone has both unmatched leftover names AND at least
+    one already-matched ward row belonging to a single designated city
+    that appears in no other zone -- i.e. the whole city clearly lives in
+    this one zone, so its remaining (stale-named) wards must too. In that
+    case the zone's per-ward rows for that city (matched and unmatched)
+    are collapsed into one city-level row, using the city's aggregate
+    area/habitable-area figures. Ordinary multi-city ambiguity (e.g.
+    Yokohama/Sagamihara sharing 緑区) is unaffected: that's already
+    resolved by resolve_ward_candidates() using live ward names, so it
+    never reaches this function as unmatched.
+
+    Returns (rows_to_drop_from_matched, extra_rows, still_unmatched).
+    """
+    empty_extra = pd.DataFrame(columns=["prefecture", "municipality", "total_area_km2", "habitable_area_km2", "medical_zone_name"])
+    if unmatched.empty:
+        return matched.iloc[0:0], empty_extra, unmatched
+
+    match_to_city_group = (
+        area_df[area_df["is_ward"]].drop_duplicates("match_name").set_index("match_name")["city_group"].to_dict()
+    )
+    matched = matched.copy()
+    matched["city_group"] = matched["match_name"].map(match_to_city_group)
+
+    # Zones (pref_code, city_group) a designated city's wards are matched in.
+    city_zone_counts = (
+        matched.dropna(subset=["city_group"])
+        .groupby(["pref_code", "city_group"])["medical_zone_code"]
+        .nunique()
+    )
+
+    city_area_lookup = area_df[~area_df["is_ward"]].set_index(["pref_code", "municipality"])[
+        ["prefecture", "total_area_km2", "habitable_area_km2"]
+    ]
+
+    new_rows = []
+    drop_matched_idx = []
+    drop_unmatched_idx = []
+    for (pref_code, zone_code), grp in unmatched.groupby(["pref_code", "medical_zone_code"]):
+        same_zone_matched = matched[
+            (matched["pref_code"] == pref_code) & (matched["medical_zone_code"] == zone_code)
+        ]
+        candidate_groups = [
+            g
+            for g in same_zone_matched["city_group"].dropna().unique()
+            if city_zone_counts.get((pref_code, g)) == 1  # this city lives in exactly this one zone
+        ]
+        if len(candidate_groups) != 1:
+            continue  # ambiguous or no candidate -- leave unmatched rather than guess
+        city_name = candidate_groups[0]
+        key = (pref_code, city_name)
+        if key not in city_area_lookup.index:
+            continue
+        area_row = city_area_lookup.loc[key]
+        new_rows.append(
+            {
+                "prefecture": area_row["prefecture"],
+                "municipality": city_name,
+                "total_area_km2": area_row["total_area_km2"],
+                "habitable_area_km2": area_row["habitable_area_km2"],
+                "medical_zone_name": grp["medical_zone_name"].iloc[0],
+            }
+        )
+        drop_unmatched_idx.extend(grp.index.tolist())
+        drop_matched_idx.extend(same_zone_matched[same_zone_matched["city_group"] == city_name].index.tolist())
+
+    extra_rows = pd.DataFrame(new_rows) if new_rows else empty_extra
+    rows_to_drop_from_matched = matched.loc[drop_matched_idx]
+    still_unmatched = unmatched.drop(index=drop_unmatched_idx)
+    return rows_to_drop_from_matched, extra_rows, still_unmatched
+
+
 def build() -> tuple[pd.DataFrame, pd.DataFrame]:
     area_df = load_habitable_area_national()
     zone_df = load_medical_zone_mapping_national()
@@ -264,10 +345,17 @@ def build() -> tuple[pd.DataFrame, pd.DataFrame]:
     matched = merged[merged["habitable_area_km2"].notna()].copy()
     unmatched = merged[merged["habitable_area_km2"].isna()].copy()
 
+    rows_to_drop, extra_rows, unmatched = collapse_stale_ward_boundaries(matched, unmatched, area_df)
+    matched = matched.drop(index=rows_to_drop.index)
+
     matched["prefecture"] = matched["prefecture"].fillna(matched["pref_name"])
-    result = matched[
-        ["prefecture", "municipality", "total_area_km2", "habitable_area_km2", "medical_zone_name"]
-    ].sort_values(["prefecture", "medical_zone_name", "municipality"])
+    result = pd.concat(
+        [
+            matched[["prefecture", "municipality", "total_area_km2", "habitable_area_km2", "medical_zone_name"]],
+            extra_rows,
+        ],
+        ignore_index=True,
+    ).sort_values(["prefecture", "medical_zone_name", "municipality"])
 
     return result, unmatched
 
