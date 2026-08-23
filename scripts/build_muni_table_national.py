@@ -1,7 +1,8 @@
 """Build the simple municipality-level table for all of Japan (nationwide).
 
-Same shape as build_muni_table.py (prefecture, municipality, total_area_km2,
-habitable_area_km2, medical_zone_name) but not filtered to one prefecture.
+Same shape as build_muni_table.py (prefecture, pref_code, municipality,
+muni_code, total_area_km2, habitable_area_km2, medical_zone_name,
+medical_zone_code) but not filtered to one prefecture.
 
 Designated-city (政令指定都市) wards need special handling: several share a
 bare ward name with another designated city in the *same* prefecture (e.g.
@@ -138,8 +139,9 @@ def load_habitable_area_national() -> pd.DataFrame:
         axis=1,
     )
 
+    out["muni_code"] = out["digits"]
     return out[
-        ["pref_code", "prefecture", "municipality", "match_name", "is_ward", "city_group",
+        ["pref_code", "prefecture", "municipality", "muni_code", "match_name", "is_ward", "city_group",
          "total_area_km2", "habitable_area_km2"]
     ]
 
@@ -270,7 +272,12 @@ def collapse_stale_ward_boundaries(
 
     Returns (rows_to_drop_from_matched, extra_rows, still_unmatched).
     """
-    empty_extra = pd.DataFrame(columns=["prefecture", "municipality", "total_area_km2", "habitable_area_km2", "medical_zone_name"])
+    empty_extra = pd.DataFrame(
+        columns=[
+            "prefecture", "pref_code", "municipality", "muni_code",
+            "total_area_km2", "habitable_area_km2", "medical_zone_name", "medical_zone_code",
+        ]
+    )
     if unmatched.empty:
         return matched.iloc[0:0], empty_extra, unmatched
 
@@ -288,7 +295,7 @@ def collapse_stale_ward_boundaries(
     )
 
     city_area_lookup = area_df[~area_df["is_ward"]].set_index(["pref_code", "municipality"])[
-        ["prefecture", "total_area_km2", "habitable_area_km2"]
+        ["prefecture", "muni_code", "total_area_km2", "habitable_area_km2"]
     ]
 
     new_rows = []
@@ -313,10 +320,13 @@ def collapse_stale_ward_boundaries(
         new_rows.append(
             {
                 "prefecture": area_row["prefecture"],
+                "pref_code": pref_code,
                 "municipality": city_name,
+                "muni_code": area_row["muni_code"],
                 "total_area_km2": area_row["total_area_km2"],
                 "habitable_area_km2": area_row["habitable_area_km2"],
                 "medical_zone_name": grp["medical_zone_name"].iloc[0],
+                "medical_zone_code": zone_code,
             }
         )
         drop_unmatched_idx.extend(grp.index.tolist())
@@ -334,7 +344,7 @@ def build() -> tuple[pd.DataFrame, pd.DataFrame]:
     zone_df = resolve_ward_candidates(zone_df, area_df)
 
     area_lookup = area_df.set_index(["pref_code", "match_name"])[
-        ["prefecture", "total_area_km2", "habitable_area_km2"]
+        ["prefecture", "muni_code", "total_area_km2", "habitable_area_km2"]
     ]
     # Guard against remaining ambiguity (duplicate (pref_code, match_name) in area_df).
     dup_area_keys = area_lookup.index[area_lookup.index.duplicated(keep=False)]
@@ -351,7 +361,12 @@ def build() -> tuple[pd.DataFrame, pd.DataFrame]:
     matched["prefecture"] = matched["prefecture"].fillna(matched["pref_name"])
     result = pd.concat(
         [
-            matched[["prefecture", "municipality", "total_area_km2", "habitable_area_km2", "medical_zone_name"]],
+            matched[
+                [
+                    "prefecture", "pref_code", "municipality", "muni_code",
+                    "total_area_km2", "habitable_area_km2", "medical_zone_name", "medical_zone_code",
+                ]
+            ],
             extra_rows,
         ],
         ignore_index=True,
