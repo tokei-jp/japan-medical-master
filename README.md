@@ -32,12 +32,15 @@ pip install -r requirements.txt
    ```
 
    出力: `data/output/nagano_secondary_medical_zone_geo_coefficient.csv`
+   （長野県10二次医療圏 × 77市区町村で突合済み。リポジトリに生成済みの
+   CSVを同梱している）
 
 ## 前提・仮定事項
 
-`docs/ASSUMPTIONS.md` を参照。特に、このプロジェクトを構築したセッションでは
-e-Stat への外部ネットワークアクセスがブロックされており、実ファイルの中身を
-確認した上での動作検証はできていない点に注意。
+`docs/ASSUMPTIONS.md` を参照。実ファイルのシートレイアウト（特に
+`medical_zone_mapping.xlsx` が市区町村コード列を持たない印刷用グリッド
+形式である点）や、target_facility_count / simple_required_fte が仮の
+定数である点など、実データ差し替えが必要な箇所を記載している。
 
 ## geo_coefficient の計算式
 
